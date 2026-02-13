@@ -1,0 +1,652 @@
+<!DOCTYPE html>
+<html lang="en" data-bs-theme="dark">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AWS Service Quotas Dashboard</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
+    <style>
+        .usage-bar { min-width: 60px; }
+        .metric-image-row td { background-color: var(--bs-tertiary-bg); }
+        #no-match-row { display: none; }
+        .service-group-header { cursor: pointer; background-color: var(--bs-tertiary-bg) !important; }
+        .service-group-header:hover { background-color: var(--bs-secondary-bg) !important; }
+        .service-group-header td { font-weight: 600; }
+        th.sortable { cursor: pointer; user-select: none; }
+        th.sortable:hover { opacity: 0.85; }
+        th.sortable .sort-icon { margin-left: 4px; opacity: 0.5; }
+        th.sortable.sort-active .sort-icon { opacity: 1; }
+        .theme-toggle { cursor: pointer; font-size: 1.2rem; }
+    </style>
+</head>
+<body>
+
+    <nav class="navbar navbar-expand-lg navbar-dark bg-dark">
+        <div class="container-fluid">
+            <span class="navbar-brand mb-0 h1">AWS Service Quotas Dashboard</span>
+            <span class="theme-toggle text-light" id="theme-toggle" title="Toggle dark mode">🌙</span>
+        </div>
+    </nav>
+
+    <div class="container-fluid mt-3">
+
+        <!-- Credentials Configuration (Collapsible) -->
+        <div class="mb-3">
+            <button class="btn btn-outline-secondary btn-sm" type="button" data-bs-toggle="collapse"
+                    data-bs-target="#credentials-section" aria-expanded="false" aria-controls="credentials-section">
+                &#9881; Configure AWS Credentials
+            </button>
+            <div class="collapse mt-2" id="credentials-section">
+                <div class="card card-body">
+                    <form id="credentials-form">
+                        <div class="row g-2 align-items-end">
+                            <div class="col-auto">
+                                <label for="region-input" class="form-label">Region</label>
+                                <input type="text" class="form-control form-control-sm" id="region-input" placeholder="us-east-1">
+                            </div>
+                            <div class="col-auto">
+                                <label for="access-key-input" class="form-label">Access Key ID</label>
+                                <input type="text" class="form-control form-control-sm" id="access-key-input" placeholder="AKIA...">
+                            </div>
+                            <div class="col-auto">
+                                <label for="secret-key-input" class="form-label">Secret Access Key</label>
+                                <input type="password" class="form-control form-control-sm" id="secret-key-input" placeholder="Secret">
+                            </div>
+                            <div class="col-auto">
+                                <label for="session-token-input" class="form-label">Session Token <small class="text-muted">(optional)</small></label>
+                                <input type="password" class="form-control form-control-sm" id="session-token-input" placeholder="STS token">
+                            </div>
+                            <div class="col-auto">
+                                <button type="submit" class="btn btn-primary btn-sm">Configure</button>
+                            </div>
+                        </div>
+                    </form>
+                </div>
+            </div>
+        </div>
+
+        <!-- Service Selection (Collapsible) -->
+        <div class="mb-3">
+            <button class="btn btn-outline-secondary btn-sm" type="button" data-bs-toggle="collapse"
+                    data-bs-target="#service-selection-section" aria-expanded="false" aria-controls="service-selection-section">
+                📋 Select Services
+            </button>
+            <span class="ms-2 text-muted small" id="service-selection-count"></span>
+            <div class="collapse mt-2" id="service-selection-section">
+                <div class="card card-body">
+                    <div class="row g-2">
+                        <div class="col">
+                            <label class="form-label fw-bold small">Available Services</label>
+                            <input type="text" class="form-control form-control-sm mb-1" id="available-search" placeholder="Filter...">
+                            <select multiple class="form-select" id="available-services" size="8" style="resize:vertical; min-height:120px;"></select>
+                        </div>
+                        <div class="col-auto d-flex flex-column justify-content-center gap-1">
+                            <button class="btn btn-sm btn-outline-primary" id="add-selected-services" title="Add selected">▶</button>
+                            <button class="btn btn-sm btn-outline-primary" id="add-all-services" title="Add all">▶▶</button>
+                            <button class="btn btn-sm btn-outline-secondary" id="remove-selected-services" title="Remove selected">◀</button>
+                            <button class="btn btn-sm btn-outline-secondary" id="remove-all-services" title="Remove all">◀◀</button>
+                        </div>
+                        <div class="col">
+                            <label class="form-label fw-bold small">Selected Services</label>
+                            <input type="text" class="form-control form-control-sm mb-1" id="selected-search" placeholder="Filter...">
+                            <select multiple class="form-select" id="selected-services" size="8" style="resize:vertical; min-height:120px;"></select>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Filter Controls -->
+        <div class="row mb-3 g-2 align-items-center">
+            <div class="col-auto">
+                <input type="text" class="form-control form-control-sm" id="search-input" placeholder="Search by service or quota name...">
+            </div>
+            <div class="col-auto">
+                <div class="form-check">
+                    <input class="form-check-input" type="checkbox" id="rate-limited-toggle" checked>
+                    <label class="form-check-label" for="rate-limited-toggle">Rate Limited Only</label>
+                </div>
+            </div>
+            <div class="col-auto">
+                <div class="input-group input-group-sm">
+                    <span class="input-group-text">Usage ≥</span>
+                    <input type="number" class="form-control" id="usage-threshold-input" min="0" max="100" value="" placeholder="off" style="width:70px">
+                    <span class="input-group-text">%</span>
+                </div>
+            </div>
+            <div class="col-auto">
+                <button class="btn btn-sm btn-outline-info" id="refresh-metrics-btn" disabled title="Configure AWS credentials first">🔄 Refresh Metrics</button>
+            </div>
+            <div class="col-auto">
+                <button class="btn btn-sm btn-outline-secondary" id="toggle-all-services-btn">📂 Expand All</button>
+            </div>
+        </div>
+
+        <!-- Quota Table -->
+        <div class="table-responsive">
+            <table class="table table-striped table-hover table-bordered" id="quota-table">
+                <thead class="table-dark">
+                    <tr>
+                        <th class="sortable" data-sort-key="QuotaName">Quota Name <span class="sort-icon">⇅</span></th>
+                        <th class="sortable" data-sort-key="Value">Value <span class="sort-icon">⇅</span></th>
+                        <th class="sortable" data-sort-key="UsageRaw">Usage <span class="sort-icon">⇅</span></th>
+                        <th class="sortable" data-sort-key="UsagePct">Usage % <span class="sort-icon">⇅</span></th>
+                        <th>Period</th>
+                        <th>Graph</th>
+                        <th>Console</th>
+                    </tr>
+                </thead>
+                <tbody id="quota-table-body"></tbody>
+                <tbody id="no-match-row">
+                    <tr><td colspan="7" class="text-center text-muted py-4">No quotas match your filters.</td></tr>
+                </tbody>
+            </table>
+        </div>
+    </div>
+
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/aws-sdk@2.1692.0/dist/aws-sdk.min.js"></script>
+    <script src="quota-data.js"></script>
+
+    <script>
+    const state = {
+        allQuotas: [],
+        filters: { searchText: '', rateLimitedOnly: true, usageThreshold: null },
+        sort: { key: null, asc: true },
+        expandedServices: new Set(),
+        selectedServices: new Set(),
+        fetchedServices: new Set(),
+        credentials: { region: null, accessKeyId: null, secretAccessKey: null, sessionToken: null },
+        cloudWatchClient: null,
+        usageCache: new Map(),
+        usageRawCache: new Map(),
+        darkMode: false,
+        isFetchingUsage: false
+    };
+
+    function loadAllQuotas() {
+        state.allQuotas = typeof QUOTA_DATA !== 'undefined' ? QUOTA_DATA : [];
+        return state.allQuotas;
+    }
+
+    function applyFilters(quotas, filters) {
+        let result = quotas;
+        // Filter by selected services
+        result = result.filter(q => state.selectedServices.has(q.ServiceName || 'Unknown'));
+        if (filters.rateLimitedOnly) result = result.filter(q => q.UsageMetric);
+        if (filters.searchText) {
+            const term = filters.searchText.toLowerCase();
+            result = result.filter(q => (q.ServiceName || '').toLowerCase().includes(term) || (q.QuotaName || '').toLowerCase().includes(term));
+        }
+        if (filters.usageThreshold != null && filters.usageThreshold >= 0) {
+            result = result.filter(q => {
+                const cached = state.usageCache.get(q.QuotaCode);
+                return cached != null && cached >= filters.usageThreshold;
+            });
+        }
+        return result;
+    }
+
+    function sortQuotas(quotas, sortKey, asc) {
+        if (!sortKey) return quotas;
+        const sorted = [...quotas];
+        sorted.sort((a, b) => {
+            let va, vb;
+            if (sortKey === 'UsageRaw') {
+                va = state.usageRawCache.get(a.QuotaCode) ?? -1;
+                vb = state.usageRawCache.get(b.QuotaCode) ?? -1;
+            } else if (sortKey === 'UsagePct') {
+                va = state.usageCache.get(a.QuotaCode) ?? -1;
+                vb = state.usageCache.get(b.QuotaCode) ?? -1;
+            } else {
+                va = a[sortKey]; vb = b[sortKey];
+            }
+            if (typeof va === 'boolean') { va = va ? 1 : 0; vb = vb ? 1 : 0; }
+            if (typeof va === 'number' && typeof vb === 'number') return asc ? va - vb : vb - va;
+            va = String(va || '').toLowerCase(); vb = String(vb || '').toLowerCase();
+            return asc ? va.localeCompare(vb) : vb.localeCompare(va);
+        });
+        return sorted;
+    }
+
+    function renderTable(quotas) {
+        const tableBody = document.getElementById('quota-table-body');
+        const noMatchRow = document.getElementById('no-match-row');
+        tableBody.innerHTML = '';
+        if (quotas.length === 0) { noMatchRow.style.display = ''; return; }
+        noMatchRow.style.display = 'none';
+        const sorted = sortQuotas(quotas, state.sort.key, state.sort.asc);
+        const groups = new Map();
+        for (const q of sorted) {
+            const svc = q.ServiceName || 'Unknown';
+            if (!groups.has(svc)) groups.set(svc, []);
+            groups.get(svc).push(q);
+        }
+        for (const [serviceName, serviceQuotas] of groups) {
+            const isExpanded = state.expandedServices.has(serviceName);
+            const headerRow = document.createElement('tr');
+            headerRow.className = 'service-group-header';
+            headerRow.setAttribute('data-service-name', serviceName);
+            const headerTd = document.createElement('td');
+            headerTd.setAttribute('colspan', '7');
+            headerTd.textContent = `${isExpanded ? '▼' : '▶'} ${serviceName} (${serviceQuotas.length} quotas)`;
+            headerRow.appendChild(headerTd);
+            tableBody.appendChild(headerRow);
+            if (!isExpanded) continue;
+            for (const q of serviceQuotas) {
+                const row = document.createElement('tr');
+                // Quota Name
+                const tdQuota = document.createElement('td');
+                tdQuota.textContent = q.QuotaName || '';
+                if (q.Description) tdQuota.title = q.Description;
+                row.appendChild(tdQuota);
+                // Value
+                const tdValue = document.createElement('td');
+                tdValue.textContent = q.Value != null ? q.Value : '';
+                row.appendChild(tdValue);
+                // Usage raw value
+                const tdUsageRaw = document.createElement('td');
+                tdUsageRaw.setAttribute('data-usage-raw-quota-code', q.QuotaCode || '');
+                const cachedRaw = state.usageRawCache.get(q.QuotaCode);
+                tdUsageRaw.textContent = cachedRaw != null ? cachedRaw : '-';
+                row.appendChild(tdUsageRaw);
+                // Usage %
+                const tdUsage = document.createElement('td');
+                tdUsage.setAttribute('data-usage-quota-code', q.QuotaCode || '');
+                const cached = state.usageCache.get(q.QuotaCode);
+                if (cached != null) {
+                    const barClass = cached > 80 ? 'bg-danger' : cached >= 50 ? 'bg-warning' : 'bg-success';
+                    tdUsage.innerHTML = `<div class="progress usage-bar" role="progressbar"><div class="progress-bar ${barClass}" style="width:${Math.min(cached,100)}%">${Math.round(cached)}%</div></div>`;
+                } else {
+                    tdUsage.textContent = '-';
+                }
+                row.appendChild(tdUsage);
+                // Period
+                const tdPeriod = document.createElement('td');
+                tdPeriod.textContent = (q.Period && q.Period.PeriodValue != null && q.Period.PeriodUnit) ? q.Period.PeriodValue + '/' + q.Period.PeriodUnit : '-';
+                row.appendChild(tdPeriod);
+                // Graph
+                const tdGraph = document.createElement('td');
+                if (q.UsageMetric) {
+                    const btn = document.createElement('button');
+                    btn.className = 'btn btn-sm btn-outline-primary';
+                    btn.innerHTML = '📈';
+                    btn.title = state.cloudWatchClient ? 'View CloudWatch metric' : 'Configure AWS credentials to view metrics';
+                    btn.setAttribute('data-quota-code', q.QuotaCode || '');
+                    if (!state.cloudWatchClient) btn.disabled = true;
+                    tdGraph.appendChild(btn);
+                }
+                row.appendChild(tdGraph);
+                // Console link
+                const tdConsole = document.createElement('td');
+                const consoleUrl = `https://console.aws.amazon.com/servicequotas/home/services/${q.ServiceCode}/quotas/${q.QuotaCode}`;
+                const link = document.createElement('a');
+                link.href = consoleUrl;
+                link.target = '_blank';
+                link.rel = 'noopener';
+                link.className = 'btn btn-sm btn-outline-secondary';
+                link.textContent = '🔗';
+                link.title = 'Open in AWS Console';
+                tdConsole.appendChild(link);
+                row.appendChild(tdConsole);
+                tableBody.appendChild(row);
+            }
+        }
+    }
+
+    // ========== CloudWatch ==========
+    function initCloudWatchClient(region, accessKeyId, secretAccessKey, sessionToken) {
+        if (typeof AWS === 'undefined') { alert('AWS SDK failed to load. CloudWatch features require HTTP.\nRun: python3 -m http.server 8080'); return false; }
+        const credOpts = { accessKeyId, secretAccessKey };
+        if (sessionToken) credOpts.sessionToken = sessionToken;
+        AWS.config.update({ region, credentials: new AWS.Credentials(credOpts) });
+        state.cloudWatchClient = new AWS.CloudWatch();
+        state.credentials = { region, accessKeyId, secretAccessKey, sessionToken };
+        sessionStorage.setItem('aws_region', region);
+        sessionStorage.setItem('aws_access_key', accessKeyId);
+        sessionStorage.setItem('aws_secret_key', secretAccessKey);
+        if (sessionToken) sessionStorage.setItem('aws_session_token', sessionToken); else sessionStorage.removeItem('aws_session_token');
+        document.querySelectorAll('#quota-table-body button[data-quota-code]').forEach(btn => { btn.disabled = false; btn.title = 'View CloudWatch metric'; });
+        document.getElementById('refresh-metrics-btn').disabled = false;
+        document.getElementById('refresh-metrics-btn').title = 'Refresh usage metrics from CloudWatch';
+        return true;
+    }
+
+    async function fetchQuotaUsage(usageMetric, period) {
+        if (!state.cloudWatchClient) return null;
+        try {
+            const dims = Object.entries(usageMetric.MetricDimensions).map(([Name, Value]) => ({ Name, Value }));
+            const now = new Date();
+            const data = await state.cloudWatchClient.getMetricStatistics({ Namespace: usageMetric.MetricNamespace, MetricName: usageMetric.MetricName, Dimensions: dims, Statistics: [usageMetric.MetricStatisticRecommendation], Period: period, StartTime: new Date(now.getTime() - 5*60*1000), EndTime: now }).promise();
+            if (!data.Datapoints || !data.Datapoints.length) return null;
+            data.Datapoints.sort((a, b) => new Date(b.Timestamp) - new Date(a.Timestamp));
+            return data.Datapoints[0][usageMetric.MetricStatisticRecommendation] ?? null;
+        } catch (e) { return null; }
+    }
+
+    function getPeriodInSeconds(q) {
+        if (!q.Period || q.Period.PeriodValue == null || !q.Period.PeriodUnit) return 60;
+        return q.Period.PeriodUnit.toUpperCase() === 'SECOND' ? q.Period.PeriodValue : q.Period.PeriodUnit.toUpperCase() === 'MINUTE' ? q.Period.PeriodValue * 60 : 60;
+    }
+
+    function updateUsageCell(q, val) {
+        const cell = document.querySelector(`[data-usage-quota-code="${q.QuotaCode}"]`);
+        const rawCell = document.querySelector(`[data-usage-raw-quota-code="${q.QuotaCode}"]`);
+        if (!cell) return;
+        if (val == null) { cell.innerHTML = '<span class="badge bg-secondary">N/A</span>'; if (rawCell) rawCell.textContent = '-'; return; }
+        state.usageRawCache.set(q.QuotaCode, val);
+        if (rawCell) rawCell.textContent = val;
+        const pct = calculateUsagePercentage(val, q.Value);
+        if (pct === Infinity || isNaN(pct)) { cell.innerHTML = '<span class="badge bg-secondary">N/A</span>'; return; }
+        state.usageCache.set(q.QuotaCode, pct);
+        const cls = pct > 80 ? 'bg-danger' : pct >= 50 ? 'bg-warning' : 'bg-success';
+        cell.innerHTML = `<div class="progress usage-bar" role="progressbar"><div class="progress-bar ${cls}" style="width:${Math.min(pct,100)}%">${Math.round(pct)}%</div></div>`;
+    }
+
+    async function fetchAndUpdateBatch(quotas) {
+        await Promise.all(quotas.map(async (q) => {
+            const cell = document.querySelector(`[data-usage-quota-code="${q.QuotaCode}"]`);
+            if (cell) cell.innerHTML = '<span class="spinner-border spinner-border-sm text-secondary" role="status"></span>';
+            const val = await fetchQuotaUsage(q.UsageMetric, getPeriodInSeconds(q));
+            updateUsageCell(q, val);
+        }));
+    }
+
+    async function refreshUsageBatched(quotas) {
+        const BATCH_SIZE = 5;
+        for (let i = 0; i < quotas.length; i += BATCH_SIZE) {
+            await fetchAndUpdateBatch(quotas.slice(i, i + BATCH_SIZE));
+        }
+    }
+
+    async function refreshUsagePercentages() {
+        if (state.isFetchingUsage) return;
+        state.isFetchingUsage = true;
+        try {
+            state.fetchedServices.clear();
+            if (!state.cloudWatchClient) return;
+            const rlQuotas = state.allQuotas.filter(q => q.UsageMetric);
+            for (const q of rlQuotas) state.fetchedServices.add(q.ServiceName || 'Unknown');
+            await refreshUsageBatched(rlQuotas);
+        } finally {
+            state.isFetchingUsage = false;
+        }
+    }
+
+    async function refreshUsageForService(serviceName) {
+        if (!state.cloudWatchClient) return;
+        const svcQuotas = state.allQuotas.filter(q => q.UsageMetric && (q.ServiceName || 'Unknown') === serviceName);
+        await refreshUsageBatched(svcQuotas);
+    }
+
+    async function fetchMetricWidgetImage(usageMetric, quotaName) {
+        if (!state.cloudWatchClient) return null;
+        try {
+            const m = [usageMetric.MetricNamespace, usageMetric.MetricName];
+            for (const [k, v] of Object.entries(usageMetric.MetricDimensions)) m.push(k, v);
+            m.push({ stat: usageMetric.MetricStatisticRecommendation });
+            const data = await state.cloudWatchClient.getMetricWidgetImage({ MetricWidget: JSON.stringify({ metrics: [m], title: quotaName, period: 300, width: 600, height: 400, start: '-PT3H', end: 'PT0H' }) }).promise();
+            if (!data.MetricWidgetImage) return null;
+            const bytes = new Uint8Array(data.MetricWidgetImage);
+            let bin = ''; for (let i = 0; i < bytes.length; i++) bin += String.fromCharCode(bytes[i]);
+            return 'data:image/png;base64,' + btoa(bin);
+        } catch (e) { return null; }
+    }
+
+    function calculateUsagePercentage(usageValue, quotaValue) {
+        return quotaValue === 0 ? Infinity : (usageValue / quotaValue) * 100;
+    }
+
+    // ========== Dark Mode ==========
+    function setTheme(dark) {
+        state.darkMode = dark;
+        document.documentElement.setAttribute('data-bs-theme', dark ? 'dark' : 'light');
+        document.getElementById('theme-toggle').textContent = dark ? '☀️' : '🌙';
+        localStorage.setItem('theme', dark ? 'dark' : 'light');
+    }
+
+    // ========== UI Controller ==========
+    function refreshTable() {
+        const filtered = applyFilters(state.allQuotas, state.filters);
+        renderTable(filtered);
+    }
+
+    function updateSortHeaders() {
+        document.querySelectorAll('#quota-table th.sortable').forEach(th => {
+            const key = th.getAttribute('data-sort-key');
+            const icon = th.querySelector('.sort-icon');
+            th.classList.toggle('sort-active', key === state.sort.key);
+            icon.textContent = key === state.sort.key ? (state.sort.asc ? '▲' : '▼') : '⇅';
+        });
+    }
+
+    function initUI() {
+        // Theme
+        const savedTheme = localStorage.getItem('theme');
+        setTheme(savedTheme !== 'light');
+        document.getElementById('theme-toggle').addEventListener('click', () => setTheme(!state.darkMode));
+
+        // Load data — services start collapsed
+        loadAllQuotas();
+
+        // Build dual-listbox service selector
+        const allServiceNames = [...new Set(state.allQuotas.map(q => q.ServiceName || 'Unknown'))].sort();
+        const savedSelection = localStorage.getItem('selectedServices');
+        if (savedSelection) {
+            try { state.selectedServices = new Set(JSON.parse(savedSelection)); } catch (e) { state.selectedServices = new Set(); }
+        }
+        const availableSelect = document.getElementById('available-services');
+        const selectedSelect = document.getElementById('selected-services');
+        let availableFilter = '', selectedFilter = '';
+
+        function renderDualLists() {
+            const aFilter = availableFilter.toLowerCase();
+            const sFilter = selectedFilter.toLowerCase();
+            availableSelect.innerHTML = '';
+            selectedSelect.innerHTML = '';
+            for (const svc of allServiceNames) {
+                if (state.selectedServices.has(svc)) {
+                    if (sFilter && !svc.toLowerCase().includes(sFilter)) continue;
+                    const opt = document.createElement('option');
+                    opt.value = svc; opt.textContent = svc;
+                    selectedSelect.appendChild(opt);
+                } else {
+                    if (aFilter && !svc.toLowerCase().includes(aFilter)) continue;
+                    const opt = document.createElement('option');
+                    opt.value = svc; opt.textContent = svc;
+                    availableSelect.appendChild(opt);
+                }
+            }
+            updateServiceCount();
+        }
+        function saveServiceSelection() {
+            localStorage.setItem('selectedServices', JSON.stringify([...state.selectedServices]));
+            updateServiceCount();
+        }
+        function updateServiceCount() {
+            document.getElementById('service-selection-count').textContent = `${state.selectedServices.size}/${allServiceNames.length} services selected`;
+        }
+        document.getElementById('available-search').addEventListener('input', function () { availableFilter = this.value; renderDualLists(); });
+        document.getElementById('selected-search').addEventListener('input', function () { selectedFilter = this.value; renderDualLists(); });
+
+        document.getElementById('add-selected-services').addEventListener('click', () => {
+            for (const opt of availableSelect.selectedOptions) state.selectedServices.add(opt.value);
+            saveServiceSelection(); renderDualLists(); refreshTable();
+        });
+        document.getElementById('add-all-services').addEventListener('click', () => {
+            for (const opt of availableSelect.options) state.selectedServices.add(opt.value);
+            saveServiceSelection(); renderDualLists(); refreshTable();
+        });
+        document.getElementById('remove-selected-services').addEventListener('click', () => {
+            for (const opt of selectedSelect.selectedOptions) state.selectedServices.delete(opt.value);
+            saveServiceSelection(); renderDualLists(); refreshTable();
+        });
+        document.getElementById('remove-all-services').addEventListener('click', () => {
+            for (const opt of selectedSelect.options) state.selectedServices.delete(opt.value);
+            saveServiceSelection(); renderDualLists(); refreshTable();
+        });
+        // Double-click to move single item
+        availableSelect.addEventListener('dblclick', (e) => {
+            if (e.target.tagName === 'OPTION') { state.selectedServices.add(e.target.value); saveServiceSelection(); renderDualLists(); refreshTable(); }
+        });
+        selectedSelect.addEventListener('dblclick', (e) => {
+            if (e.target.tagName === 'OPTION') { state.selectedServices.delete(e.target.value); saveServiceSelection(); renderDualLists(); refreshTable(); }
+        });
+        renderDualLists();
+
+        refreshTable();
+
+        // Search
+        document.getElementById('search-input').addEventListener('input', function () {
+            state.filters.searchText = this.value;
+            refreshTable();
+        });
+
+        // Rate-limited toggle
+        document.getElementById('rate-limited-toggle').addEventListener('change', function () {
+            state.filters.rateLimitedOnly = this.checked;
+            refreshTable();
+        });
+
+        // Usage threshold filter
+        document.getElementById('usage-threshold-input').addEventListener('input', function () {
+            const val = this.value.trim();
+            state.filters.usageThreshold = val === '' ? null : parseFloat(val);
+            refreshTable();
+        });
+
+        // Refresh metrics button
+        document.getElementById('refresh-metrics-btn').addEventListener('click', function () {
+            if (!state.cloudWatchClient) return;
+            const filtered = applyFilters(state.allQuotas, state.filters);
+            if (filtered.length === 0) return;
+            state.usageCache.clear();
+            state.usageRawCache.clear();
+            state.fetchedServices.clear();
+            refreshTable();
+            // Only fetch for currently expanded services
+            const visibleServices = new Set(filtered.map(q => q.ServiceName || 'Unknown'));
+            for (const svc of visibleServices) {
+                if (state.expandedServices.has(svc)) {
+                    state.fetchedServices.add(svc);
+                    refreshUsageForService(svc);
+                }
+            }
+        });
+
+        // Expand/Collapse all services button
+        const toggleAllBtn = document.getElementById('toggle-all-services-btn');
+        function updateToggleAllBtn() {
+            const filtered = applyFilters(state.allQuotas, state.filters);
+            const visibleServices = new Set(filtered.map(q => q.ServiceName || 'Unknown'));
+            const allExpanded = [...visibleServices].every(s => state.expandedServices.has(s));
+            toggleAllBtn.textContent = allExpanded ? '📁 Collapse All' : '📂 Expand All';
+        }
+        toggleAllBtn.addEventListener('click', function () {
+            const filtered = applyFilters(state.allQuotas, state.filters);
+            const visibleServices = new Set(filtered.map(q => q.ServiceName || 'Unknown'));
+            const allExpanded = [...visibleServices].every(s => state.expandedServices.has(s));
+            if (allExpanded) {
+                for (const s of visibleServices) state.expandedServices.delete(s);
+            } else {
+                for (const s of visibleServices) state.expandedServices.add(s);
+                // Auto-fetch metrics for newly expanded services
+                if (state.cloudWatchClient && !state.isFetchingUsage) {
+                    for (const s of visibleServices) {
+                        if (!state.fetchedServices.has(s)) {
+                            state.fetchedServices.add(s);
+                            refreshUsageForService(s);
+                        }
+                    }
+                }
+            }
+            refreshTable();
+            updateToggleAllBtn();
+        });
+
+        // Patch refreshTable to also update toggle button text
+        const _origRefreshTable = refreshTable;
+        refreshTable = function() { _origRefreshTable(); updateToggleAllBtn(); };
+
+        // Column sorting
+        document.querySelectorAll('#quota-table th.sortable').forEach(th => {
+            th.addEventListener('click', function () {
+                const key = this.getAttribute('data-sort-key');
+                if (state.sort.key === key) state.sort.asc = !state.sort.asc;
+                else { state.sort.key = key; state.sort.asc = true; }
+                updateSortHeaders();
+                refreshTable();
+            });
+        });
+
+        // Table click delegation: service headers + metric expand
+        document.getElementById('quota-table-body').addEventListener('click', async function (e) {
+            const headerRow = e.target.closest('.service-group-header');
+            if (headerRow) {
+                const svc = headerRow.getAttribute('data-service-name');
+                if (state.expandedServices.has(svc)) {
+                    state.expandedServices.delete(svc);
+                } else {
+                    state.expandedServices.add(svc);
+                }
+                refreshTable();
+                // Auto-fetch metrics on first expand if credentials are configured
+                if (state.expandedServices.has(svc) && state.cloudWatchClient && !state.fetchedServices.has(svc) && !state.isFetchingUsage) {
+                    state.fetchedServices.add(svc);
+                    refreshUsageForService(svc);
+                }
+                return;
+            }
+            const btn = e.target.closest('button[data-quota-code]');
+            if (!btn) return;
+            const quotaCode = btn.getAttribute('data-quota-code');
+            const quotaRow = btn.closest('tr');
+            const next = quotaRow.nextElementSibling;
+            if (next && next.classList.contains('metric-image-row')) { next.remove(); return; }
+            const imageRow = document.createElement('tr');
+            imageRow.classList.add('metric-image-row');
+            const td = document.createElement('td');
+            td.setAttribute('colspan', '7');
+            td.innerHTML = '<div class="text-center py-3"><span class="spinner-border text-primary" role="status"></span> Loading…</div>';
+            imageRow.appendChild(td);
+            quotaRow.after(imageRow);
+            const quota = state.allQuotas.find(q => q.QuotaCode === quotaCode);
+            if (!quota || !quota.UsageMetric) { td.innerHTML = '<div class="alert alert-danger mb-0">Could not load metric image</div>'; return; }
+            const dataUrl = await fetchMetricWidgetImage(quota.UsageMetric, quota.QuotaName);
+            if (!imageRow.parentNode) return;
+            if (dataUrl) { td.innerHTML = ''; const img = document.createElement('img'); img.src = dataUrl; img.alt = quota.QuotaName; img.className = 'img-fluid'; td.appendChild(img); }
+            else { td.innerHTML = '<div class="alert alert-danger mb-0">Could not load metric image</div>'; }
+        });
+
+        // Credentials form
+        document.getElementById('credentials-form').addEventListener('submit', function (e) {
+            e.preventDefault();
+            const r = document.getElementById('region-input').value.trim();
+            const a = document.getElementById('access-key-input').value.trim();
+            const s = document.getElementById('secret-key-input').value.trim();
+            const t = document.getElementById('session-token-input').value.trim() || null;
+            if (r && a && s) {
+                if (initCloudWatchClient(r, a, s, t)) {
+                    refreshTable();
+                    const btn = this.querySelector('button[type="submit"]');
+                    btn.textContent = '✓ Configured'; btn.classList.replace('btn-primary', 'btn-success');
+                    setTimeout(() => { btn.textContent = 'Configure'; btn.classList.replace('btn-success', 'btn-primary'); }, 2000);
+                }
+            }
+        });
+
+        // Restore credentials
+        const sr = sessionStorage.getItem('aws_region'), sk = sessionStorage.getItem('aws_access_key'), ss = sessionStorage.getItem('aws_secret_key'), st = sessionStorage.getItem('aws_session_token');
+        if (sr && sk && ss) {
+            document.getElementById('region-input').value = sr;
+            document.getElementById('access-key-input').value = sk;
+            document.getElementById('secret-key-input').value = ss;
+            if (st) document.getElementById('session-token-input').value = st;
+            if (initCloudWatchClient(sr, sk, ss, st)) { refreshTable(); }
+        }
+    }
+
+    document.addEventListener('DOMContentLoaded', initUI);
+    </script>
+</body>
+</html>
